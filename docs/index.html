@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Gateway Agent Platform</title>
+<meta name="description" content="A unified FastAPI gateway that routes chat requests to OpenAI, Claude and Groq through one API.">
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --text: #1c1917; --muted: #57534e;
+    --border: #e7e5e4; --accent: #4f46e5; --accent-soft: #eef2ff; --code-bg: #f5f5f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c0a09; --surface: #1c1917; --text: #fafaf9; --muted: #a8a29e;
+      --border: #292524; --accent: #818cf8; --accent-soft: #1e1b4b; --code-bg: #171412;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c0a09; --surface: #1c1917; --text: #fafaf9; --muted: #a8a29e;
+    --border: #292524; --accent: #818cf8; --accent-soft: #1e1b4b; --code-bg: #171412;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 72px 0 48px; border-bottom: 1px solid var(--border); }
+  .tag { display: inline-block; font-size: 13px; color: var(--accent); background: var(--accent-soft);
+         padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+  h1 { font-size: clamp(32px, 6vw, 48px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .lead { font-size: 19px; color: var(--muted); max-width: 640px; margin: 0 0 28px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn { text-decoration: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; font-size: 15px;
+         border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  section { padding: 48px 0; border-bottom: 1px solid var(--border); }
+  h2 { font-size: 24px; margin: 0 0 20px; letter-spacing: -0.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+        overflow-x: auto; font: 14px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; margin: 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .two { grid-template-columns: 1fr; } }
+  .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  svg text { fill: var(--text); font: 13px system-ui, sans-serif; }
+  svg .box { fill: var(--surface); stroke: var(--border); }
+  svg .hl { fill: var(--accent-soft); stroke: var(--accent); }
+  svg .line { stroke: var(--muted); fill: none; }
+  .stack { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1px solid var(--border); background: var(--surface); padding: 6px 12px; border-radius: 999px; font-size: 14px; }
+  ul.road { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+  ul.road li { display: flex; gap: 10px; align-items: baseline; }
+  ul.road .dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); flex: none; }
+  ul.road .done { background: var(--accent); }
+  footer { padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="tag">FastAPI · Multi-provider LLM</span>
+    <h1>AI Gateway Agent Platform</h1>
+    <p class="lead">One endpoint, any model. A unified API that routes chat requests to OpenAI, Anthropic Claude and Groq, returning the same response shape with token usage every time.</p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/farvez/ai-gateway-agent-platform">View on GitHub</a>
+      <a class="btn" href="#quickstart">Quickstart</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section>
+    <div class="wrap">
+      <h2>Features</h2>
+      <div class="grid">
+        <div class="card"><h3>Single /chat endpoint</h3><p>Switch providers by changing one field in the request body.</p></div>
+        <div class="card"><h3>Pluggable providers</h3><p>Each backend implements an abstract <code>LLMProvider</code>. Adding one takes a single file.</p></div>
+        <div class="card"><h3>Normalized responses</h3><p>Same JSON schema across every provider: content, model and usage.</p></div>
+        <div class="card"><h3>Token usage</h3><p>Input, output and total tokens are reported on every call, ready for cost tracking.</p></div>
+        <div class="card"><h3>Model overrides</h3><p>Pick a specific model per request, or fall back to each provider's default.</p></div>
+        <div class="card"><h3>OpenAPI docs</h3><p>Interactive Swagger UI generated automatically at <code>/docs</code>.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Architecture</h2>
+      <svg viewBox="0 0 640 260" width="100%" role="img" aria-label="Client calls FastAPI, which routes through LLMGateway to OpenAI, Claude or Groq providers">
+        <rect class="box" x="20" y="20" width="120" height="44" rx="8"/><text x="80" y="47" text-anchor="middle">Client</text>
+        <rect class="box" x="260" y="20" width="120" height="44" rx="8"/><text x="320" y="47" text-anchor="middle">FastAPI /chat</text>
+        <rect class="hl" x="260" y="108" width="120" height="44" rx="8"/><text x="320" y="135" text-anchor="middle">LLMGateway</text>
+        <rect class="box" x="60" y="196" width="140" height="44" rx="8"/><text x="130" y="223" text-anchor="middle">OpenAIProvider</text>
+        <rect class="box" x="250" y="196" width="140" height="44" rx="8"/><text x="320" y="223" text-anchor="middle">ClaudeProvider</text>
+        <rect class="box" x="440" y="196" width="140" height="44" rx="8"/><text x="510" y="223" text-anchor="middle">GroqProvider</text>
+        <path class="line" d="M140 42 H260"/><path class="line" d="M320 64 V108"/>
+        <path class="line" d="M320 152 V174 H130 V196"/><path class="line" d="M320 152 V196"/><path class="line" d="M320 174 H510 V196"/>
+      </svg>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="wrap">
+      <h2>Quickstart</h2>
+<pre>git clone https://github.com/farvez/ai-gateway-agent-platform.git
+cd ai-gateway-agent-platform
+python -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env        # add your API keys
+uvicorn app.main:app --reload</pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Example</h2>
+      <div class="two">
+        <div>
+          <div class="label">POST /chat</div>
+<pre>{
+  "provider": "claude",
+  "message": "Explain vector DBs
+              in one sentence.",
+  "model": "claude-sonnet-5"
+}</pre>
+        </div>
+        <div>
+          <div class="label">Response</div>
+<pre>{
+  "provider": "anthropic",
+  "model": "claude-sonnet-5",
+  "content": "A vector database ...",
+  "usage": {
+    "input_tokens": 14,
+    "output_tokens": 32,
+    "total_tokens": 46
+  }
+}</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Roadmap</h2>
+      <ul class="road">
+        <li><span class="dot done"></span>OpenAI, Claude and Groq providers with normalized responses</li>
+        <li><span class="dot done"></span>Token usage reporting</li>
+        <li><span class="dot"></span>Gemini provider</li>
+        <li><span class="dot"></span>Streaming responses (SSE)</li>
+        <li><span class="dot"></span>Automatic fallback and retries across providers</li>
+        <li><span class="dot"></span>Per-request cost tracking and usage dashboard</li>
+        <li><span class="dot"></span>Redis caching, rate limiting, API-key auth</li>
+        <li><span class="dot"></span>Agent layer with tool calling</li>
+        <li><span class="dot"></span>Docker, CI and test suite</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Tech stack</h2>
+      <div class="stack">
+        <span class="chip">Python</span><span class="chip">FastAPI</span><span class="chip">Pydantic</span>
+        <span class="chip">Uvicorn</span><span class="chip">OpenAI SDK</span><span class="chip">Anthropic SDK</span>
+        <span class="chip">python-dotenv</span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">Built by <a href="https://github.com/farvez">farvez</a> · MIT License</div>
+</footer>
+</body>
+</html>
