@@ -27,9 +27,13 @@ class BrokenProvider(LLMProvider):
 @pytest.fixture
 def client(monkeypatch):
     # Replace the real providers with fakes for this test only.
-    monkeypatch.setattr(gateway, "provider_classes", {
-        "fake": FakeProvider,
-        "broken": BrokenProvider,
-    })
+    monkeypatch.setattr(
+        gateway,
+        "provider_classes",
+        {
+            "fake": FakeProvider,
+            "broken": BrokenProvider,
+        },
+    )
     monkeypatch.setattr(gateway, "_instances", {})
     return TestClient(app)

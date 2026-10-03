@@ -1,5 +1,10 @@
 # AI Gateway Agent Platform
 
+[![CI](https://github.com/farvez/ai-gateway-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/farvez/ai-gateway-agent-platform/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.13-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-261230)
+
 A unified **LLM gateway** built with FastAPI that routes chat requests to multiple AI providers (OpenAI, Anthropic Claude, Groq) through a single, consistent API — with normalized responses and token-usage reporting.
 
 > One endpoint. Any model. Same response shape.
@@ -95,6 +100,17 @@ uvicorn app.main:app --reload
 
 Open **http://localhost:8000/docs** for the interactive Swagger UI.
 
+## Development
+
+```bash
+pip install -r requirements-dev.txt   # app + pytest + ruff
+pytest -v                             # run tests (no API keys needed - providers are mocked)
+ruff check .                          # lint
+ruff format .                         # auto-format
+```
+
+Every push and pull request runs lint, format check and tests on GitHub Actions.
+
 ## API
 
 | Method | Path      | Description                      |
@@ -162,7 +178,8 @@ self.provider_classes["gemini"] = GeminiProvider
 - [ ] Rate limiting & API-key authentication
 - [ ] Request logging & usage dashboard (PostgreSQL)
 - [ ] Agent layer: tool calling and multi-step workflows
-- [ ] Docker + docker-compose, GitHub Actions CI, pytest suite
+- [x] pytest suite with mocked providers, ruff, GitHub Actions CI
+- [ ] Docker + docker-compose
 
 ## Tech stack
 

@@ -3,8 +3,8 @@ from .claude_provider import ClaudeProvider
 from .groq_provider import GroqProvider
 from .openai_provider import OpenAIProvider
 
-class LLMGateway:
 
+class LLMGateway:
     def __init__(self):
 
         # Store classes, not instances: a provider is only created the first
@@ -13,7 +13,7 @@ class LLMGateway:
         self.provider_classes: dict[str, type[LLMProvider]] = {
             "openai": OpenAIProvider,
             "claude": ClaudeProvider,
-            "groq": GroqProvider
+            "groq": GroqProvider,
         }
         self._instances: dict[str, LLMProvider] = {}
 
@@ -21,8 +21,7 @@ class LLMGateway:
 
         if provider not in self.provider_classes:
             raise ValueError(
-                f"Unsupported provider: {provider}. "
-                f"Choose from: {', '.join(self.provider_classes)}"
+                f"Unsupported provider: {provider}. Choose from: {', '.join(self.provider_classes)}"
             )
 
         if provider not in self._instances:
@@ -30,14 +29,6 @@ class LLMGateway:
 
         return self._instances[provider]
 
-    def generate(
-            self,
-            provider:str,
-            message:str,
-            model: str | None = None
-    ) -> dict:
+    def generate(self, provider: str, message: str, model: str | None = None) -> dict:
 
-        return self.get_provider(provider).generate(
-            message= message,
-            model = model
-        )
+        return self.get_provider(provider).generate(message=message, model=model)
