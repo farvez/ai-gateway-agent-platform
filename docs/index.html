@@ -83,6 +83,7 @@
         <div class="card"><h3>Normalized responses</h3><p>Same JSON schema across every provider: content, model and usage.</p></div>
         <div class="card"><h3>Token usage</h3><p>Input, output and total tokens are reported on every call, ready for cost tracking.</p></div>
         <div class="card"><h3>Model overrides</h3><p>Pick a specific model per request, or fall back to each provider's default.</p></div>
+        <div class="card"><h3>Retries &amp; fallback</h3><p>Temporary errors retry with exponential backoff; if a provider stays down, the next one in the chain answers.</p></div>
         <div class="card"><h3>OpenAPI docs</h3><p>Interactive Swagger UI generated automatically at <code>/docs</code>.</p></div>
       </div>
     </div>
@@ -152,13 +153,14 @@ uvicorn app.main:app --reload</pre>
       <ul class="road">
         <li><span class="dot done"></span>OpenAI, Claude and Groq providers with normalized responses</li>
         <li><span class="dot done"></span>Token usage reporting</li>
+        <li><span class="dot done"></span>Retries with exponential backoff, fallback across providers, timeouts</li>
+        <li><span class="dot done"></span>pytest suite, ruff and GitHub Actions CI</li>
         <li><span class="dot"></span>Gemini provider</li>
         <li><span class="dot"></span>Streaming responses (SSE)</li>
-        <li><span class="dot"></span>Automatic fallback and retries across providers</li>
         <li><span class="dot"></span>Per-request cost tracking and usage dashboard</li>
         <li><span class="dot"></span>Redis caching, rate limiting, API-key auth</li>
         <li><span class="dot"></span>Agent layer with tool calling</li>
-        <li><span class="dot"></span>Docker, CI and test suite</li>
+        <li><span class="dot"></span>Docker and cloud deployment</li>
       </ul>
     </div>
   </section>

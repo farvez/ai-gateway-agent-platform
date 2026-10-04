@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app.gateway.errors import AllProvidersFailedError, UnsupportedProviderError
 from app.gateway.gateway import LLMGateway
 
 # Providers read their API keys lazily (on first request), so loading
@@ -17,6 +18,8 @@ class ChatRequest(BaseModel):
     provider: str
     message: str
     model: str | None = None
+    # Providers to try, in order, if the main one fails, e.g. ["claude", "groq"].
+    fallbacks: list[str] = []
 
 
 @app.get("/")
@@ -34,13 +37,16 @@ def chat(request: ChatRequest):
 
     try:
         response = gateway.generate(
-            provider=request.provider, message=request.message, model=request.model
+            provider=request.provider,
+            message=request.message,
+            model=request.model,
+            fallbacks=request.fallbacks,
         )
-    except ValueError as e:
+    except UnsupportedProviderError as e:
         # Client asked for a provider we don't support.
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        # Missing key, bad model name, upstream outage, etc.
+    except AllProvidersFailedError as e:
+        # Every provider failed after retries: missing key, bad model, outage, etc.
         raise HTTPException(status_code=502, detail=f"Provider error: {e}") from e
 
     return response

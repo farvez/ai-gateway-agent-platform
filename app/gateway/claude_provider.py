@@ -2,12 +2,19 @@ import os
 
 import anthropic
 
+from app.config import request_timeout
+
 from .base import LLMProvider
 
 
 class ClaudeProvider(LLMProvider):
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        # max_retries=0: the gateway handles retries, so the SDK must not retry too.
+        self.client = anthropic.Anthropic(
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            timeout=request_timeout(),
+            max_retries=0,
+        )
 
     def generate(self, message: str, model: str | None = None) -> dict:
 
