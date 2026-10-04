@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app import db
 from app.gateway.gateway import LLMGateway
 from app.main import app, gateway
 from tests.fakes import (
@@ -23,7 +24,15 @@ FAKE_PROVIDERS = {
 
 
 @pytest.fixture
-def client(monkeypatch):
+def database():
+    """A fresh, empty in-memory database for each test."""
+    engine = db.configure("sqlite://")
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def client(monkeypatch, database):
     # Replace the real providers with fakes for this test only.
     monkeypatch.setattr(gateway, "provider_classes", dict(FAKE_PROVIDERS))
     monkeypatch.setattr(gateway, "_instances", {})

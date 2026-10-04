@@ -26,6 +26,7 @@ Every LLM provider ships a different SDK, request format and response schema. Ap
 - **Retries with exponential backoff** on temporary errors (429, 5xx, timeouts, dropped connections) — permanent errors like a bad key fail fast
 - **Automatic fallback** across providers (e.g. OpenAI → Claude → Groq), with routing details in every response
 - **Request timeouts** so a slow provider can't hang the API
+- **Usage & cost tracking** — every request is logged (tokens, USD cost, latency, time-to-first-token, fallbacks, errors) and summarized at `/usage` with p50/p95 latency; message text is never stored
 - **Health check** endpoint for load balancers and uptime monitors
 - **Auto-generated OpenAPI docs** at `/docs`
 
@@ -54,6 +55,10 @@ ai-gateway-agent-platform/
 ├── app/
 │   ├── main.py                 # FastAPI app & routes
 │   ├── config.py               # Timeout / retry settings from environment
+│   ├── db.py                   # SQLAlchemy engine/session (SQLite by default)
+│   ├── models.py               # RequestLog table
+│   ├── pricing.py              # USD price per model + cost calculation
+│   ├── usage.py                # Record requests, build /usage summaries
 │   └── gateway/
 │       ├── base.py             # LLMProvider abstract base class
 │       ├── gateway.py          # LLMGateway – registry, retries, fallback
@@ -110,6 +115,7 @@ Optional reliability settings (defaults shown):
 | `LLM_MAX_RETRIES` | `2` | Extra attempts per provider on temporary errors |
 | `LLM_RETRY_BASE_DELAY` | `0.5` | First retry delay; doubles each retry (±10% jitter) |
 | `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `GROQ_MODEL` | built-in | Default model per provider (providers retire models — change it here, no code edit) |
+| `DATABASE_URL` | `sqlite:///./gateway.db` | Where request logs are stored; e.g. `postgresql+psycopg://user:pw@host/db` for PostgreSQL |
 
 ### Run
 
@@ -139,6 +145,8 @@ Every push and pull request runs lint, format check and tests on GitHub Actions.
 | POST   | `/chat`   | Send a message to a provider     |
 | POST   | `/chat/stream` | Same request, streamed as Server-Sent Events |
 | GET    | `/demo`   | Browser page for trying streaming |
+| GET    | `/usage`  | Totals, success rate, cost, p50/p95 latency — overall, by provider, by model (`?hours=24` to limit the window) |
+| GET    | `/usage/recent` | Latest logged requests (`?limit=20`) |
 
 ### `POST /chat`
 
@@ -238,6 +246,31 @@ Or open **http://127.0.0.1:8000/demo** to watch it stream in the browser, with t
 
 **Measured locally** (warm connection): time to first token ≈ 0.26s on Groq and ≈ 0.72s on OpenAI `gpt-4o-mini` — the same as calling the SDKs directly, so the gateway adds no measurable latency.
 
+## Usage & cost tracking
+
+Every `/chat` and `/chat/stream` request is written to the `request_logs` table: provider requested and provider that answered, model, tokens, cost in USD, total latency, time to first token (streaming), retry attempts, whether fallback was used, and the error if it failed. **The message text is never stored** — prompts can contain private data, and reporting only needs the numbers.
+
+Cost is calculated from the price table in [`app/pricing.py`](app/pricing.py) (USD per 1M tokens, checked against each provider's pricing page). Models without a known price are logged with `cost_usd: null` rather than a guess. `/chat` responses and the stream's `done` event include `usage.cost_usd` too.
+
+Recording never breaks a request: if the database is unavailable, the user still gets their answer and a warning is logged.
+
+**`GET /usage`** (real numbers from local testing):
+
+```json
+{
+  "totals": {
+    "requests": 6, "failures": 1, "success_rate": 0.8333,
+    "total_tokens": 559, "cost_usd": 0.0003896,
+    "latency_ms": {"p50": 2413, "p95": 4117},
+    "ttft_ms": {"p50": 516, "p95": 1351}
+  },
+  "by_provider": [{"provider": "groq", "requests": 2, "cost_usd": 0.0001704, "avg_latency_ms": 2414, "...": "..."}],
+  "by_model": [{"model": "gpt-4o-mini", "requests": 2, "cost_usd": 0.0000732, "...": "..."}]
+}
+```
+
+p50/p95 use the nearest-rank method over successful requests: p95 means 95% of requests were at least this fast.
+
 ## Adding a new provider
 
 1. Create `app/gateway/<name>_provider.py` and subclass `LLMProvider`.
@@ -256,18 +289,20 @@ self.provider_classes["gemini"] = GeminiProvider
 - [x] Groq provider
 - [x] Retries with exponential backoff, cross-provider fallback, timeouts
 - [x] Streaming responses (Server-Sent Events) + browser demo
+- [x] Request logging, per-request cost tracking, `/usage` summaries with p50/p95 latency
+- [ ] Per-API-key usage and budgets
+- [ ] Usage dashboard page
+- [ ] Database migrations (Alembic) and PostgreSQL
 - [ ] Gemini provider
-- [ ] Cost tracking per request and per API key
 - [ ] Response caching (Redis)
 - [ ] Rate limiting & API-key authentication
-- [ ] Request logging & usage dashboard (PostgreSQL)
 - [ ] Agent layer: tool calling and multi-step workflows
 - [x] pytest suite with mocked providers, ruff, GitHub Actions CI
 - [ ] Docker + docker-compose
 
 ## Tech stack
 
-Python · FastAPI · Pydantic · Uvicorn · OpenAI SDK · Anthropic SDK · python-dotenv
+Python · FastAPI · Pydantic · SQLAlchemy · SQLite · Uvicorn · OpenAI SDK · Anthropic SDK · pytest · ruff · GitHub Actions
 
 ## License
 
