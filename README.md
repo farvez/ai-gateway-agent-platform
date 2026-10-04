@@ -18,6 +18,7 @@ Every LLM provider ships a different SDK, request format and response schema. Ap
 ## Features
 
 - **Single `/chat` endpoint** for every provider
+- **Streaming** via Server-Sent Events (`/chat/stream`) — tokens appear as they're generated, with a browser demo at `/demo`
 - **Pluggable provider architecture** — each provider implements the `LLMProvider` abstract base class
 - **Normalized responses** — same JSON shape (`provider`, `model`, `content`, `usage`) regardless of backend
 - **Token usage tracking** — input / output / total tokens returned on every call
@@ -59,7 +60,8 @@ ai-gateway-agent-platform/
 │       ├── errors.py           # Error types & retryable-vs-permanent classification
 │       ├── openai_provider.py  # OpenAI implementation
 │       ├── claude_provider.py  # Anthropic Claude implementation
-│       └── groq_provider.py    # Groq implementation (OpenAI-compatible API)
+│       └── groq_provider.py    # Groq – subclass of OpenAIProvider (OpenAI-compatible API)
+│   └── static/demo.html        # Browser demo for streaming
 ├── tests/                      # pytest suite with fake providers
 ├── .github/workflows/ci.yml    # Lint + tests on every push
 ├── .env.example
@@ -135,6 +137,8 @@ Every push and pull request runs lint, format check and tests on GitHub Actions.
 | GET    | `/`       | Service info                     |
 | GET    | `/health` | Health check                     |
 | POST   | `/chat`   | Send a message to a provider     |
+| POST   | `/chat/stream` | Same request, streamed as Server-Sent Events |
+| GET    | `/demo`   | Browser page for trying streaming |
 
 ### `POST /chat`
 
@@ -201,10 +205,46 @@ curl -X POST http://localhost:8000/chat \
   -d '{"provider": "openai", "message": "Hello!", "fallbacks": ["claude", "groq"]}'
 ```
 
+### `POST /chat/stream`
+
+Same request body as `/chat`. The response is a `text/event-stream`:
+
+```
+event: delta
+data: {"type": "delta", "text": "Rivers "}
+
+event: delta
+data: {"type": "delta", "text": "carve valleys..."}
+
+event: done
+data: {"type": "done", "provider": "groq", "model": "openai/gpt-oss-120b", "usage": {...}, "routing": {...}}
+```
+
+| Event | Meaning |
+|---|---|
+| `delta` | A piece of the answer — append `text` to what you have |
+| `done` | Final event, with token `usage` and `routing` |
+| `error` | The provider failed *after* streaming started; the stream ends |
+
+**Retries and fallback with streaming:** the gateway waits for the provider's first event before sending the response headers. Until then, retries and fallback work exactly as in `/chat`, and if every provider fails you get a real `400`/`502` status. Once text has been sent, switching providers would glue two different answers together, so a failure mid-stream ends with an `error` event instead.
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat/stream   -H "Content-Type: application/json"   -d '{"provider": "groq", "message": "Write 3 sentences about rivers."}'
+```
+
+Or open **http://127.0.0.1:8000/demo** to watch it stream in the browser, with time-to-first-token and token counts.
+
+> **Windows tip:** use `127.0.0.1` rather than `localhost` for local testing — `localhost` tries IPv6 first and can add ~2s per connection.
+
+**Measured locally** (warm connection): time to first token ≈ 0.26s on Groq and ≈ 0.72s on OpenAI `gpt-4o-mini` — the same as calling the SDKs directly, so the gateway adds no measurable latency.
+
 ## Adding a new provider
 
 1. Create `app/gateway/<name>_provider.py` and subclass `LLMProvider`.
-2. Implement `generate(message, model=None) -> dict` returning the normalized shape.
+2. Implement `generate(message, model=None) -> dict` returning the normalized shape, and
+   `stream(message, model=None)` yielding `delta` events then one `done` event.
+   For an OpenAI-compatible API, just subclass `OpenAIProvider` and set `name`, `api_key_env`,
+   `base_url` and `fallback_model` — see `groq_provider.py`.
 3. Register the class (not an instance) in `LLMGateway.__init__` — it is created lazily on first use:
 
 ```python
@@ -215,8 +255,8 @@ self.provider_classes["gemini"] = GeminiProvider
 
 - [x] Groq provider
 - [x] Retries with exponential backoff, cross-provider fallback, timeouts
+- [x] Streaming responses (Server-Sent Events) + browser demo
 - [ ] Gemini provider
-- [ ] Streaming responses (Server-Sent Events)
 - [ ] Cost tracking per request and per API key
 - [ ] Response caching (Redis)
 - [ ] Rate limiting & API-key authentication

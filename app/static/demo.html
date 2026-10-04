@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Streaming Demo</title>
+<style>
+  :root {
+    --bg: #fafaf9; --surface: #ffffff; --text: #1c1917; --muted: #57534e;
+    --border: #e7e5e4; --accent: #4f46e5; --error: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0a09; --surface: #1c1917; --text: #fafaf9; --muted: #a8a29e;
+      --border: #292524; --accent: #818cf8; --error: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display: grid; gap: 12px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  label { font-size: 13px; font-weight: 600; color: var(--muted); display: grid; gap: 4px; }
+  select, input, textarea, button { font: inherit; color: var(--text); background: var(--surface);
+         border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  textarea { width: 100%; min-height: 80px; resize: vertical; }
+  button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+           cursor: pointer; justify-self: start; padding: 8px 20px; }
+  button:disabled { opacity: .5; cursor: default; }
+  #output { margin-top: 24px; background: var(--surface); border: 1px solid var(--border);
+            border-radius: 12px; padding: 16px; min-height: 120px; white-space: pre-wrap; }
+  #stats { margin-top: 12px; color: var(--muted); font-size: 14px;
+           font-family: ui-monospace, Consolas, monospace; }
+  .error { color: var(--error); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Streaming demo</h1>
+  <p class="sub">Calls <code>POST /chat/stream</code> and renders Server-Sent Events as they arrive.</p>
+
+  <form id="form">
+    <div class="row">
+      <label>Provider
+        <select id="provider">
+          <option value="groq">groq</option>
+          <option value="openai">openai</option>
+          <option value="claude">claude</option>
+        </select>
+      </label>
+      <label>Fallbacks (comma separated)
+        <input id="fallbacks" value="openai">
+      </label>
+    </div>
+    <label>Message
+      <textarea id="message">Write a short paragraph about why streaming makes chat apps feel faster.</textarea>
+    </label>
+    <button id="send" type="submit">Send</button>
+  </form>
+
+  <div id="output" aria-live="polite"></div>
+  <div id="stats"></div>
+</main>
+
+<script>
+const form = document.getElementById("form");
+const output = document.getElementById("output");
+const stats = document.getElementById("stats");
+const send = document.getElementById("send");
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  output.textContent = "";
+  output.classList.remove("error");
+  stats.textContent = "waiting for first token…";
+  send.disabled = true;
+
+  const body = {
+    provider: document.getElementById("provider").value,
+    message: document.getElementById("message").value,
+    fallbacks: document.getElementById("fallbacks").value
+      .split(",").map(s => s.trim()).filter(Boolean),
+  };
+  const started = performance.now();
+  let firstTokenAt = null;
+
+  try {
+    const res = await fetch("/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    // 400 / 502 come back as normal JSON errors, before any streaming starts.
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(`${res.status}: ${err.detail}`);
+    }
+
+    // EventSource only supports GET, so read the POST response stream by hand.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Events are separated by a blank line; keep any incomplete tail in the buffer.
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        const dataLine = part.split("\n").find(line => line.startsWith("data: "));
+        if (!dataLine) continue;
+        const event = JSON.parse(dataLine.slice(6));
+
+        if (event.type === "delta") {
+          if (firstTokenAt === null) firstTokenAt = performance.now();
+          output.textContent += event.text;
+        } else if (event.type === "done") {
+          const total = ((performance.now() - started) / 1000).toFixed(2);
+          const ttft = (((firstTokenAt ?? performance.now()) - started) / 1000).toFixed(2);
+          const r = event.routing;
+          stats.textContent =
+            `served by ${r.served_by} (${event.model})` +
+            (r.fallback_used ? " · fallback used" : "") +
+            ` · first token ${ttft}s · total ${total}s · ${event.usage.total_tokens} tokens`;
+        } else if (event.type === "error") {
+          throw new Error(`stream failed: ${event.error}`);
+        }
+      }
+    }
+  } catch (err) {
+    output.classList.add("error");
+    output.textContent += (output.textContent ? "\n\n" : "") + err.message;
+    stats.textContent = "";
+  } finally {
+    send.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

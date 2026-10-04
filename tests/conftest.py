@@ -8,6 +8,7 @@ from tests.fakes import (
     BrokenProvider,
     FakeProvider,
     FlakyProvider,
+    MidStreamFailProvider,
     MissingKeyProvider,
 )
 
@@ -17,6 +18,7 @@ FAKE_PROVIDERS = {
     "flaky": FlakyProvider,
     "retryable": AlwaysRetryableProvider,
     "nokey": MissingKeyProvider,
+    "midfail": MidStreamFailProvider,
 }
 
 
