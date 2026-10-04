@@ -2,7 +2,7 @@ import os
 
 from openai import OpenAI
 
-from app.config import request_timeout
+from app.config import default_model, request_timeout
 
 from .base import LLMProvider
 
@@ -21,7 +21,7 @@ class GroqProvider(LLMProvider):
 
     def generate(self, message: str, model: str | None = None) -> dict:
 
-        model = model or "llama-3.3-70b-versatile"
+        model = model or default_model("groq", "openai/gpt-oss-120b")
 
         response = self.client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": message}]

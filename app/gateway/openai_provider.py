@@ -2,7 +2,7 @@ import os
 
 from openai import OpenAI
 
-from app.config import request_timeout
+from app.config import default_model, request_timeout
 
 from .base import LLMProvider
 
@@ -18,7 +18,7 @@ class OpenAIProvider(LLMProvider):
 
     def generate(self, message: str, model: str | None = None) -> dict:
 
-        model = model or "gpt-4o-mini"
+        model = model or default_model("openai", "gpt-4o-mini")
 
         response = self.client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": message}]

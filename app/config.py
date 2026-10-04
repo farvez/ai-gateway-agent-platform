@@ -17,3 +17,11 @@ def max_retries() -> int:
 def retry_base_delay() -> float:
     """Delay before the first retry; doubles on every following retry."""
     return float(os.getenv("LLM_RETRY_BASE_DELAY", "0.5"))
+
+
+def default_model(provider: str, fallback: str) -> str:
+    """Default model for a provider, overridable with e.g. GROQ_MODEL=... in .env.
+
+    Providers retire models regularly; this lets you switch without a code change.
+    """
+    return os.getenv(f"{provider.upper()}_MODEL") or fallback

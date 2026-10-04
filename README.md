@@ -107,6 +107,7 @@ Optional reliability settings (defaults shown):
 | `LLM_TIMEOUT_SECONDS` | `30` | Max seconds for one provider call |
 | `LLM_MAX_RETRIES` | `2` | Extra attempts per provider on temporary errors |
 | `LLM_RETRY_BASE_DELAY` | `0.5` | First retry delay; doubles each retry (±10% jitter) |
+| `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `GROQ_MODEL` | built-in | Default model per provider (providers retire models — change it here, no code edit) |
 
 ### Run
 
@@ -149,7 +150,7 @@ Every push and pull request runs lint, format check and tests on GitHub Actions.
 ```
 
 `provider` — `openai` | `claude` | `groq`  
-`model` — optional; defaults to `gpt-4o-mini` (OpenAI), `claude-sonnet-5` (Claude) or `llama-3.3-70b-versatile` (Groq). Applies to the primary provider only — fallbacks use their own default model.  
+`model` — optional; defaults to `gpt-4o-mini` (OpenAI), `claude-sonnet-5` (Claude) or `openai/gpt-oss-120b` (Groq) — override with `OPENAI_MODEL`, `ANTHROPIC_MODEL` or `GROQ_MODEL` in `.env`. Applies to the primary provider only — fallbacks use their own default model.  
 `fallbacks` — optional; providers to try in order if the primary one fails after its retries
 
 **Response**

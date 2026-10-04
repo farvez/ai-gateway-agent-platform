@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.gateway.errors import AllProvidersFailedError, UnsupportedProviderError
 from app.gateway.gateway import LLMGateway
@@ -15,11 +15,25 @@ gateway = LLMGateway()
 
 
 class ChatRequest(BaseModel):
-    provider: str
-    message: str
-    model: str | None = None
+    provider: str = Field(examples=["groq"])
+    message: str = Field(examples=["Explain vector databases in one sentence."])
+    # Leave out to use the provider's default model.
+    model: str | None = Field(default=None, examples=[None])
     # Providers to try, in order, if the main one fails, e.g. ["claude", "groq"].
-    fallbacks: list[str] = []
+    fallbacks: list[str] = Field(default=[], examples=[["openai"]])
+
+    # Shown as the pre-filled request in Swagger UI (/docs) instead of "string" placeholders.
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "provider": "groq",
+                    "message": "Explain vector databases in one sentence.",
+                    "fallbacks": ["openai"],
+                }
+            ]
+        }
+    }
 
 
 @app.get("/")

@@ -137,3 +137,15 @@ def test_other_errors():
     assert is_retryable(RetryableProviderError("x"))
     assert is_retryable(TimeoutError())
     assert not is_retryable(RuntimeError("bug"))
+
+
+# ---------- config ----------
+
+
+def test_default_model_can_be_overridden_by_env(monkeypatch):
+    from app.config import default_model
+
+    assert default_model("groq", "built-in") == "built-in"
+
+    monkeypatch.setenv("GROQ_MODEL", "from-env")
+    assert default_model("groq", "built-in") == "from-env"

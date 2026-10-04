@@ -2,7 +2,7 @@ import os
 
 import anthropic
 
-from app.config import request_timeout
+from app.config import default_model, request_timeout
 
 from .base import LLMProvider
 
@@ -18,7 +18,7 @@ class ClaudeProvider(LLMProvider):
 
     def generate(self, message: str, model: str | None = None) -> dict:
 
-        model = model or "claude-sonnet-5"
+        model = model or default_model("anthropic", "claude-sonnet-5")
 
         response = self.client.messages.create(
             model=model, max_tokens=1024, messages=[{"role": "user", "content": message}]
