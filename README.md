@@ -26,6 +26,8 @@ Every LLM provider ships a different SDK, request format and response schema. Ap
 - **Retries with exponential backoff** on temporary errors (429, 5xx, timeouts, dropped connections) — permanent errors like a bad key fail fast
 - **Automatic fallback** across providers (e.g. OpenAI → Claude → Groq), with routing details in every response
 - **Request timeouts** so a slow provider can't hang the API
+- **Teams, API keys and budgets** — each team gets its own keys (stored hashed), a monthly USD budget and a per-minute rate limit; admins manage everything over an admin API
+- **Guardrails** — every request needs a key; output capped at `LLM_MAX_OUTPUT_TOKENS`; input capped at `MAX_INPUT_CHARS`
 - **Usage & cost tracking** — every request is logged (tokens, USD cost, latency, time-to-first-token, fallbacks, errors) and summarized at `/usage` with p50/p95 latency; message text is never stored
 - **Health check** endpoint for load balancers and uptime monitors
 - **Auto-generated OpenAPI docs** at `/docs`
@@ -59,6 +61,9 @@ ai-gateway-agent-platform/
 │   ├── models.py               # RequestLog table
 │   ├── pricing.py              # USD price per model + cost calculation
 │   ├── usage.py                # Record requests, build /usage summaries
+│   ├── auth.py                 # API keys (hashed), team & admin authentication
+│   ├── limits.py               # Per-team rate limiter and monthly budget check
+│   ├── admin.py                # Admin API: teams, keys, budgets
 │   └── gateway/
 │       ├── base.py             # LLMProvider abstract base class
 │       ├── gateway.py          # LLMGateway – registry, retries, fallback
@@ -116,6 +121,9 @@ Optional reliability settings (defaults shown):
 | `LLM_RETRY_BASE_DELAY` | `0.5` | First retry delay; doubles each retry (±10% jitter) |
 | `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `GROQ_MODEL` | built-in | Default model per provider (providers retire models — change it here, no code edit) |
 | `DATABASE_URL` | `sqlite:///./gateway.db` | Where request logs are stored; e.g. `postgresql+psycopg://user:pw@host/db` for PostgreSQL |
+| `ADMIN_API_KEY` | *(none)* | **Required** to manage teams; the admin API is disabled without it. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `LLM_MAX_OUTPUT_TOKENS` | `1024` | Max length of every answer (cost guardrail) |
+| `MAX_INPUT_CHARS` | `20000` | Longest accepted message; longer gets a `422` |
 
 ### Run
 
@@ -124,6 +132,24 @@ uvicorn app.main:app --reload
 ```
 
 Open **http://localhost:8000/docs** for the interactive Swagger UI.
+
+### Create your first team and key
+
+Every chat request needs a team API key. With `ADMIN_API_KEY` set in `.env`:
+
+```bash
+# 1. Create a team with a $50/month budget and 60 requests/minute
+curl -X POST http://127.0.0.1:8000/admin/teams \
+  -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "search", "monthly_budget_usd": 50, "rate_limit_per_minute": 60}'
+
+# 2. Issue a key for it (team id from step 1). The full key is shown ONCE - save it.
+curl -X POST http://127.0.0.1:8000/admin/teams/1/keys \
+  -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name": "backend"}'
+```
+
+Or in Swagger UI: click **Authorize**, paste the admin key under *AdminKey*, and use the `admin` endpoints.
 
 ## Development
 
@@ -145,8 +171,17 @@ Every push and pull request runs lint, format check and tests on GitHub Actions.
 | POST   | `/chat`   | Send a message to a provider     |
 | POST   | `/chat/stream` | Same request, streamed as Server-Sent Events |
 | GET    | `/demo`   | Browser page for trying streaming |
-| GET    | `/usage`  | Totals, success rate, cost, p50/p95 latency — overall, by provider, by model (`?hours=24` to limit the window) |
-| GET    | `/usage/recent` | Latest logged requests (`?limit=20`) |
+| GET    | `/me`     | Your team, limits, budget status and this month's usage |
+| GET    | `/usage`  | **Admin.** Totals, success rate, cost, p50/p95 latency — overall, by provider, model and team (`?hours=24`, `?team_id=1`) |
+| GET    | `/usage/recent` | **Admin.** Latest logged requests (`?limit=20`) |
+| POST   | `/admin/teams` | **Admin.** Create a team (`name`, `monthly_budget_usd`, `rate_limit_per_minute`) |
+| GET    | `/admin/teams` | **Admin.** All teams with this month's spend |
+| PATCH  | `/admin/teams/{id}` | **Admin.** Change a budget or rate limit (`null` removes it) |
+| POST   | `/admin/teams/{id}/keys` | **Admin.** Issue a key — returned once, stored only as a hash |
+| GET    | `/admin/teams/{id}/keys` | **Admin.** List keys (prefix only) |
+| DELETE | `/admin/keys/{id}` | **Admin.** Revoke a key immediately |
+
+`/`, `/health` and `/demo` are public. Chat endpoints and `/me` need a team key (`Authorization: Bearer gw-...`); admin endpoints need `ADMIN_API_KEY`.
 
 ### `POST /chat`
 
@@ -208,7 +243,8 @@ The provider SDKs' built-in retries are disabled (`max_retries=0`) so the gatewa
 **cURL**
 
 ```bash
-curl -X POST http://localhost:8000/chat \
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Authorization: Bearer $GATEWAY_KEY" \
   -H "Content-Type: application/json" \
   -d '{"provider": "openai", "message": "Hello!", "fallbacks": ["claude", "groq"]}'
 ```
@@ -237,7 +273,10 @@ data: {"type": "done", "provider": "groq", "model": "openai/gpt-oss-120b", "usag
 **Retries and fallback with streaming:** the gateway waits for the provider's first event before sending the response headers. Until then, retries and fallback work exactly as in `/chat`, and if every provider fails you get a real `400`/`502` status. Once text has been sent, switching providers would glue two different answers together, so a failure mid-stream ends with an `error` event instead.
 
 ```bash
-curl -N -X POST http://127.0.0.1:8000/chat/stream   -H "Content-Type: application/json"   -d '{"provider": "groq", "message": "Write 3 sentences about rivers."}'
+curl -N -X POST http://127.0.0.1:8000/chat/stream \
+  -H "Authorization: Bearer $GATEWAY_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "groq", "message": "Write 3 sentences about rivers."}'
 ```
 
 Or open **http://127.0.0.1:8000/demo** to watch it stream in the browser, with time-to-first-token and token counts.
@@ -271,6 +310,26 @@ Recording never breaks a request: if the database is unavailable, the user still
 
 p50/p95 use the nearest-rank method over successful requests: p95 means 95% of requests were at least this fast.
 
+## Teams, keys and budgets
+
+| Check (in order, before any provider is called) | Fails with |
+|---|---|
+| Valid, unrevoked team key | `401` |
+| Under the team's rate limit (sliding 60-second window) | `429` + `Retry-After` |
+| Under the team's monthly budget | `402` |
+| Message length within `MAX_INPUT_CHARS` | `422` |
+
+- **Keys are stored as SHA-256 hashes**, never in plain text. The full key is returned once, at creation; afterwards only its prefix (`gw-nm58x8-`) is shown. A leaked database doesn't leak usable keys.
+- **Budget = 402, not 429**: clients retry 429s automatically, but waiting a few seconds won't help a team that has spent its monthly budget.
+- **Teams only see their own data** via `/me`; `/usage` and `/admin/*` are admin-only.
+- Every request is logged with its `team_id`, so `/usage` breaks spend down by team.
+
+**Known limitations** (planned fixes):
+
+- **A budget can be overshot by one request.** The check runs before the call, but the cost is only known after it. With a $50 budget that's at most one request's cost; reserving the worst-case cost (output cap × model price) up front would close the gap.
+- **The rate limiter lives in process memory.** With several server processes each allows the full limit; it needs Redis to be shared (Phase 9).
+- New columns are added to an existing database automatically, but renames and type changes need a real migration tool (Alembic, Phase 9).
+
 ## Adding a new provider
 
 1. Create `app/gateway/<name>_provider.py` and subclass `LLMProvider`.
@@ -290,12 +349,14 @@ self.provider_classes["gemini"] = GeminiProvider
 - [x] Retries with exponential backoff, cross-provider fallback, timeouts
 - [x] Streaming responses (Server-Sent Events) + browser demo
 - [x] Request logging, per-request cost tracking, `/usage` summaries with p50/p95 latency
-- [ ] Per-API-key usage and budgets
+- [x] Teams, hashed API keys, monthly budgets, per-team rate limits, admin API, `/me`
+- [x] Guardrails: output-token cap, input-length cap
+- [ ] Budget reservation (no overshoot) and 80% budget alerts
 - [ ] Usage dashboard page
 - [ ] Database migrations (Alembic) and PostgreSQL
 - [ ] Gemini provider
 - [ ] Response caching (Redis)
-- [ ] Rate limiting & API-key authentication
+- [ ] Redis-backed rate limiting for multiple server processes
 - [ ] Agent layer: tool calling and multi-step workflows
 - [x] pytest suite with mocked providers, ruff, GitHub Actions CI
 - [ ] Docker + docker-compose

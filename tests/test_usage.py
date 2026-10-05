@@ -6,6 +6,7 @@ from app import usage
 from app.db import SessionLocal
 from app.models import RequestLog
 from app.pricing import cost_usd
+from tests.conftest import ADMIN_HEADERS
 from tests.test_streaming import parse_sse
 
 # FakeProvider reports 1 input + 2 output tokens. Passing a real model name makes it
@@ -15,7 +16,7 @@ GPT_4O_MINI_COST = 1 * 0.15 / 1_000_000 + 2 * 0.60 / 1_000_000
 
 
 def recent(client) -> list[dict]:
-    return client.get("/usage/recent").json()
+    return client.get("/usage/recent", headers=ADMIN_HEADERS).json()
 
 
 # ---------- pricing ----------
@@ -140,7 +141,7 @@ def test_usage_summary(client):
     client.post("/chat", json={"provider": "broken", "message": "hi", "fallbacks": ["fake"]})
     client.post("/chat", json={"provider": "broken", "message": "hi"})
 
-    summary = client.get("/usage").json()
+    summary = client.get("/usage", headers=ADMIN_HEADERS).json()
     totals = summary["totals"]
 
     assert totals["requests"] == 4
@@ -160,7 +161,7 @@ def test_usage_summary(client):
 
 
 def test_usage_summary_when_empty(client):
-    totals = client.get("/usage").json()["totals"]
+    totals = client.get("/usage", headers=ADMIN_HEADERS).json()["totals"]
 
     assert totals["requests"] == 0
     assert totals["success_rate"] is None
@@ -182,8 +183,8 @@ def test_usage_hours_filter(client):
         session.commit()
     client.post("/chat", json=PRICED)
 
-    assert client.get("/usage").json()["totals"]["requests"] == 2
-    assert client.get("/usage?hours=24").json()["totals"]["requests"] == 1
+    assert client.get("/usage", headers=ADMIN_HEADERS).json()["totals"]["requests"] == 2
+    assert client.get("/usage?hours=24", headers=ADMIN_HEADERS).json()["totals"]["requests"] == 1
 
 
 def test_percentiles():

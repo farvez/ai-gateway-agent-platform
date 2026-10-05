@@ -6,13 +6,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from app import db, usage
+from app import admin, config, db, usage
+from app.auth import TeamContext, require_admin, require_team
 from app.gateway.errors import AllProvidersFailedError, UnsupportedProviderError
 from app.gateway.gateway import LLMGateway
+from app.limits import budget_status, require_team_within_limits, start_of_month
 from app.pricing import cost_usd
 
 # Providers read their API keys lazily (on first request), so loading
@@ -28,13 +30,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI Gateway Agent Platform", version="0.1.0", lifespan=lifespan)
+app.include_router(admin.router)
 
 gateway = LLMGateway()
 
 
 class ChatRequest(BaseModel):
     provider: str = Field(examples=["groq"])
-    message: str = Field(examples=["Explain vector databases in one sentence."])
+    # Capped so one request can't send a huge (and expensive) prompt.
+    message: str = Field(
+        min_length=1,
+        max_length=config.max_input_chars(),
+        examples=["Explain vector databases in one sentence."],
+    )
     # Leave out to use the provider's default model.
     model: str | None = Field(default=None, examples=[None])
     # Providers to try, in order, if the main one fails, e.g. ["claude", "groq"].
@@ -65,7 +73,7 @@ def health():
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, team: TeamContext = Depends(require_team_within_limits)):
 
     started = time.perf_counter()
 
@@ -82,17 +90,17 @@ def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail=str(e)) from e
     except AllProvidersFailedError as e:
         # Every provider failed after retries: missing key, bad model, outage, etc.
-        _record_failure("chat", request, started, e)
+        _record_failure("chat", request, team, started, e)
         raise HTTPException(status_code=502, detail=f"Provider error: {e}") from e
 
     _add_cost(response)
     response["latency_ms"] = _ms_since(started)
-    _record_success("chat", response, started)
+    _record_success("chat", response, team, started)
     return response
 
 
 @app.post("/chat/stream")
-def chat_stream(request: ChatRequest):
+def chat_stream(request: ChatRequest, team: TeamContext = Depends(require_team_within_limits)):
     """Stream the answer as Server-Sent Events: `delta` events with text, then one
     `done` event with usage and routing (or an `error` event if it fails mid-stream)."""
 
@@ -113,18 +121,20 @@ def chat_stream(request: ChatRequest):
     except UnsupportedProviderError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except AllProvidersFailedError as e:
-        _record_failure("stream", request, started, e)
+        _record_failure("stream", request, team, started, e)
         raise HTTPException(status_code=502, detail=f"Provider error: {e}") from e
 
     return StreamingResponse(
-        _sse(_track_stream(itertools.chain([first], events), request, started)),
+        _sse(_track_stream(itertools.chain([first], events), request, team, started)),
         media_type="text/event-stream",
         # Stop proxies (e.g. nginx) from buffering the stream and caches from storing it.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-def _track_stream(events: Iterator[dict], request: ChatRequest, started: float) -> Iterator[dict]:
+def _track_stream(
+    events: Iterator[dict], request: ChatRequest, team: TeamContext, started: float
+) -> Iterator[dict]:
     """Pass events through unchanged (plus cost on `done`) and record the request
     once the stream ends, however it ends."""
 
@@ -145,11 +155,12 @@ def _track_stream(events: Iterator[dict], request: ChatRequest, started: float) 
             yield event
     finally:
         if outcome["status"] == "success":
-            _record_success("stream", outcome["event"], started, ttft_ms=ttft_ms)
+            _record_success("stream", outcome["event"], team, started, ttft_ms=ttft_ms)
         else:
             routing = outcome["routing"] or {}
             usage.record_request(
                 endpoint="stream",
+                team_id=team.team_id,
                 status=outcome["status"],
                 requested_provider=request.provider,
                 served_by=routing.get("served_by"),
@@ -173,21 +184,36 @@ def demo():
     return FileResponse(Path(__file__).parent / "static" / "demo.html")
 
 
-@app.get("/usage")
+@app.get("/me")
+def me(team: TeamContext = Depends(require_team)):
+    """For a team: who you are, your limits, budget status and this month's usage."""
+    return {
+        "team": {"id": team.team_id, "name": team.team_name},
+        "rate_limit_per_minute": team.rate_limit_per_minute,
+        "budget": budget_status(team),
+        "usage_this_month": usage.summarize(team_id=team.team_id, since=start_of_month()),
+    }
+
+
+@app.get("/usage", dependencies=[Depends(require_admin)], tags=["admin"])
 def get_usage(
     hours: float | None = Query(
         default=None, gt=0, description="Only count the last N hours. Omit for all time."
     ),
+    team_id: int | None = Query(default=None, description="Only count one team."),
 ):
-    """Request counts, success rate, tokens, cost and latency (p50/p95), overall and
-    broken down by provider and by model."""
-    return usage.summarize(hours)
+    """Admin: request counts, success rate, tokens, cost and latency (p50/p95), overall
+    and broken down by provider, model and team."""
+    return usage.summarize(hours, team_id=team_id)
 
 
-@app.get("/usage/recent")
-def get_recent_usage(limit: int = Query(default=20, ge=1, le=200)):
-    """The most recent requests, newest first. Message text is never stored."""
-    return usage.recent(limit)
+@app.get("/usage/recent", dependencies=[Depends(require_admin)], tags=["admin"])
+def get_recent_usage(
+    limit: int = Query(default=20, ge=1, le=200),
+    team_id: int | None = Query(default=None),
+):
+    """Admin: the most recent requests, newest first. Message text is never stored."""
+    return usage.recent(limit, team_id=team_id)
 
 
 def _ms_since(started: float) -> int:
@@ -199,11 +225,14 @@ def _add_cost(result: dict) -> None:
     tokens["cost_usd"] = cost_usd(result["model"], tokens["input_tokens"], tokens["output_tokens"])
 
 
-def _record_success(endpoint: str, result: dict, started: float, ttft_ms: int | None = None):
+def _record_success(
+    endpoint: str, result: dict, team: TeamContext, started: float, ttft_ms: int | None = None
+):
     routing = result["routing"]
     tokens = result["usage"]
     usage.record_request(
         endpoint=endpoint,
+        team_id=team.team_id,
         status="success",
         requested_provider=routing["requested"],
         served_by=routing["served_by"],
@@ -219,9 +248,12 @@ def _record_success(endpoint: str, result: dict, started: float, ttft_ms: int | 
     )
 
 
-def _record_failure(endpoint: str, request: ChatRequest, started: float, error: Exception):
+def _record_failure(
+    endpoint: str, request: ChatRequest, team: TeamContext, started: float, error: Exception
+):
     usage.record_request(
         endpoint=endpoint,
+        team_id=team.team_id,
         status="error",
         requested_provider=request.provider,
         attempts=len(getattr(error, "attempts", [])) or 1,

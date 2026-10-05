@@ -30,6 +30,7 @@
   button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
            cursor: pointer; justify-self: start; padding: 8px 20px; }
   button:disabled { opacity: .5; cursor: default; }
+  label input { width: 100%; }
   #output { margin-top: 24px; background: var(--surface); border: 1px solid var(--border);
             border-radius: 12px; padding: 16px; min-height: 120px; white-space: pre-wrap; }
   #stats { margin-top: 12px; color: var(--muted); font-size: 14px;
@@ -43,6 +44,9 @@
   <p class="sub">Calls <code>POST /chat/stream</code> and renders Server-Sent Events as they arrive.</p>
 
   <form id="form">
+    <label>Team API key
+      <input id="apikey" type="password" placeholder="gw-..." autocomplete="off">
+    </label>
     <div class="row">
       <label>Provider
         <select id="provider">
@@ -70,6 +74,13 @@ const form = document.getElementById("form");
 const output = document.getElementById("output");
 const stats = document.getElementById("stats");
 const send = document.getElementById("send");
+const apiKey = document.getElementById("apikey");
+
+// Remember the key in this browser only, so it survives a page reload.
+try { apiKey.value = localStorage.getItem("gatewayKey") || ""; } catch (e) {}
+apiKey.addEventListener("change", () => {
+  try { localStorage.setItem("gatewayKey", apiKey.value.trim()); } catch (e) {}
+});
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -90,11 +101,14 @@ form.addEventListener("submit", async (e) => {
   try {
     const res = await fetch("/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey.value.trim()}`,
+      },
       body: JSON.stringify(body),
     });
 
-    // 400 / 502 come back as normal JSON errors, before any streaming starts.
+    // 400 / 401 / 402 / 429 / 502 come back as normal JSON errors, before any streaming starts.
     if (!res.ok) {
       const err = await res.json();
       throw new Error(`${res.status}: ${err.detail}`);
@@ -129,7 +143,8 @@ form.addEventListener("submit", async (e) => {
           stats.textContent =
             `served by ${r.served_by} (${event.model})` +
             (r.fallback_used ? " · fallback used" : "") +
-            ` · first token ${ttft}s · total ${total}s · ${event.usage.total_tokens} tokens`;
+            ` · first token ${ttft}s · total ${total}s · ${event.usage.total_tokens} tokens` +
+            (event.usage.cost_usd != null ? ` · $${event.usage.cost_usd.toFixed(6)}` : "");
         } else if (event.type === "error") {
           throw new Error(`stream failed: ${event.error}`);
         }

@@ -1,9 +1,45 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+class Team(Base):
+    """A group of users (e.g. "search", "support") with its own keys, budget and limits."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    # None means "no limit".
+    monthly_budget_usd: Mapped[float | None] = mapped_column(Float)
+    rate_limit_per_minute: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ApiKey(Base):
+    """A key a team uses to call the gateway.
+
+    Only a SHA-256 hash of the key is stored, never the key itself, so a leaked
+    database doesn't leak usable keys. The key is shown once, when it's created.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    name: Mapped[str | None] = mapped_column(String(100))  # e.g. "prod backend"
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # The first few characters, so people can tell keys apart without seeing them.
+    key_prefix: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RequestLog(Base):
@@ -16,9 +52,8 @@ class RequestLog(Base):
     __tablename__ = "request_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), index=True)
 
     endpoint: Mapped[str] = mapped_column(String(20))  # "chat" or "stream"
     # "success", "error" (every provider failed), "stream_error" (failed mid-stream)

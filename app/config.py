@@ -25,3 +25,13 @@ def default_model(provider: str, fallback: str) -> str:
     Providers retire models regularly; this lets you switch without a code change.
     """
     return os.getenv(f"{provider.upper()}_MODEL") or fallback
+
+
+def max_output_tokens() -> int:
+    """Upper limit on the length of every answer, so one request can't run up a big bill."""
+    return int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1024"))
+
+
+def max_input_chars() -> int:
+    """Longest message accepted, in characters (roughly 4 characters per token)."""
+    return int(os.getenv("MAX_INPUT_CHARS", "20000"))

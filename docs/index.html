@@ -81,6 +81,7 @@
         <div class="card"><h3>Single /chat endpoint</h3><p>Switch providers by changing one field in the request body.</p></div>
         <div class="card"><h3>Pluggable providers</h3><p>Each backend implements an abstract <code>LLMProvider</code>. Adding one takes a single file.</p></div>
         <div class="card"><h3>Normalized responses</h3><p>Same JSON schema across every provider: content, model and usage.</p></div>
+        <div class="card"><h3>Teams &amp; budgets</h3><p>Each team gets hashed API keys, a monthly USD budget and a rate limit, checked before any provider is called.</p></div>
         <div class="card"><h3>Usage &amp; cost tracking</h3><p>Every request is logged with tokens, USD cost, latency and time to first token; <code>/usage</code> reports totals and p50/p95.</p></div>
         <div class="card"><h3>Model overrides</h3><p>Pick a specific model per request, or fall back to each provider's default.</p></div>
         <div class="card"><h3>Streaming</h3><p>Server-Sent Events deliver tokens as they are generated, first token in ~0.3s on Groq.</p></div>
@@ -158,9 +159,10 @@ uvicorn app.main:app --reload</pre>
         <li><span class="dot done"></span>pytest suite, ruff and GitHub Actions CI</li>
         <li><span class="dot done"></span>Streaming responses (SSE) with a browser demo</li>
         <li><span class="dot done"></span>Request logging, cost tracking and <code>/usage</code> with p50/p95 latency</li>
-        <li><span class="dot"></span>Usage dashboard and per-API-key budgets</li>
+        <li><span class="dot done"></span>Teams, hashed API keys, monthly budgets, rate limits and an admin API</li>
+        <li><span class="dot"></span>Usage dashboard</li>
         <li><span class="dot"></span>Gemini provider</li>
-        <li><span class="dot"></span>Redis caching, rate limiting, API-key auth</li>
+        <li><span class="dot"></span>Redis caching and shared rate limits</li>
         <li><span class="dot"></span>Agent layer with tool calling</li>
         <li><span class="dot"></span>Docker and cloud deployment</li>
       </ul>

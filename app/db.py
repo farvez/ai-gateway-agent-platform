@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -38,4 +38,30 @@ def configure(url: str | None = None) -> Engine:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
     return engine
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Add new nullable columns to tables that already exist.
+
+    create_all() only creates missing *tables*; it never changes existing ones, so a
+    database made by an older version of the app would lack newer columns. This is a
+    minimal stand-in for a real migration tool (Alembic), which can also rename,
+    drop and change columns.
+    """
+    inspector = inspect(engine)
+
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+
+            existing = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing or not column.nullable:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                connection.execute(
+                    text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {column_type}")
+                )

@@ -3,7 +3,7 @@ from collections.abc import Iterator
 
 from openai import OpenAI
 
-from app.config import default_model, request_timeout
+from app.config import default_model, max_output_tokens, request_timeout
 
 from .base import LLMProvider
 
@@ -32,7 +32,9 @@ class OpenAIProvider(LLMProvider):
         model = self._model(model)
 
         response = self.client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": message}]
+            model=model,
+            messages=[{"role": "user", "content": message}],
+            max_completion_tokens=max_output_tokens(),
         )
 
         return {
@@ -49,6 +51,7 @@ class OpenAIProvider(LLMProvider):
         chunks = self.client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": message}],
+            max_completion_tokens=max_output_tokens(),
             stream=True,
             # Ask for token usage in the final chunk (it's not sent by default when streaming).
             stream_options={"include_usage": True},

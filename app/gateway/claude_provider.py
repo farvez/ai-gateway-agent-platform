@@ -3,7 +3,7 @@ from collections.abc import Iterator
 
 import anthropic
 
-from app.config import default_model, request_timeout
+from app.config import default_model, max_output_tokens, request_timeout
 
 from .base import LLMProvider
 
@@ -25,7 +25,9 @@ class ClaudeProvider(LLMProvider):
         model = self._model(model)
 
         response = self.client.messages.create(
-            model=model, max_tokens=1024, messages=[{"role": "user", "content": message}]
+            model=model,
+            max_tokens=max_output_tokens(),
+            messages=[{"role": "user", "content": message}],
         )
 
         return {
@@ -40,7 +42,9 @@ class ClaudeProvider(LLMProvider):
         model = self._model(model)
 
         with self.client.messages.stream(
-            model=model, max_tokens=1024, messages=[{"role": "user", "content": message}]
+            model=model,
+            max_tokens=max_output_tokens(),
+            messages=[{"role": "user", "content": message}],
         ) as stream:
             for text in stream.text_stream:
                 yield {"type": "delta", "text": text}

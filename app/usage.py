@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import case, func, select
 
 from app.db import SessionLocal
-from app.models import RequestLog
+from app.models import RequestLog, Team
 
 logger = logging.getLogger(__name__)
 
@@ -23,28 +23,56 @@ def record_request(**fields) -> None:
         logger.warning("Could not record request usage", exc_info=True)
 
 
-def summarize(hours: float | None = None) -> dict:
-    """Totals, latency percentiles and per-provider / per-model breakdowns."""
+def team_spend_since(team_id: int, since: datetime) -> float:
+    """Total USD a team has spent since a point in time (used for budget checks)."""
+    with SessionLocal() as session:
+        return session.scalar(
+            select(func.coalesce(func.sum(RequestLog.cost_usd), 0.0)).where(
+                RequestLog.team_id == team_id, RequestLog.created_at >= since
+            )
+        )
 
-    since = datetime.now(UTC) - timedelta(hours=hours) if hours else None
+
+def summarize(
+    hours: float | None = None, team_id: int | None = None, since: datetime | None = None
+) -> dict:
+    """Totals, latency percentiles and per-provider / per-model / per-team breakdowns.
+
+    Pass team_id to only count one team's requests (what a team sees at /me).
+    """
+
+    if since is None and hours:
+        since = datetime.now(UTC) - timedelta(hours=hours)
+
+    filters = []
+    if since is not None:
+        filters.append(RequestLog.created_at >= since)
+    if team_id is not None:
+        filters.append(RequestLog.team_id == team_id)
 
     with SessionLocal() as session:
-        totals = session.execute(_aggregate_query(since)).one()
+        totals = session.execute(_aggregate_query(filters)).one()
 
         # Group by who actually answered; failed requests have no served_by,
         # so they are counted under the provider that was requested.
         provider = func.coalesce(RequestLog.served_by, RequestLog.requested_provider)
         by_provider = session.execute(
-            _aggregate_query(since, provider.label("provider")).group_by(provider)
+            _aggregate_query(filters, provider.label("provider")).group_by(provider)
         ).all()
         by_model = session.execute(
-            _aggregate_query(since, RequestLog.model)
+            _aggregate_query(filters, RequestLog.model)
             .where(RequestLog.model.is_not(None))
             .group_by(RequestLog.model)
         ).all()
 
-        latencies = _column_values(session, RequestLog.latency_ms, since)
-        ttfts = _column_values(session, RequestLog.ttft_ms, since)
+        by_team = session.execute(
+            _aggregate_query(filters, RequestLog.team_id, Team.name.label("team"))
+            .outerjoin(Team, RequestLog.team_id == Team.id)
+            .group_by(RequestLog.team_id, Team.name)
+        ).all()
+
+        latencies = _column_values(session, RequestLog.latency_ms, filters)
+        ttfts = _column_values(session, RequestLog.ttft_ms, filters)
 
     return {
         "window_hours": hours,
@@ -55,20 +83,26 @@ def summarize(hours: float | None = None) -> dict:
         },
         "by_provider": [{"provider": r.provider, **_row_to_stats(r)} for r in by_provider],
         "by_model": [{"model": r.model, **_row_to_stats(r)} for r in by_model],
+        # Requests made before teams existed have no team.
+        "by_team": [{"team_id": r.team_id, "team": r.team, **_row_to_stats(r)} for r in by_team],
     }
 
 
-def recent(limit: int = 20) -> list[dict]:
+def recent(limit: int = 20, team_id: int | None = None) -> list[dict]:
     """The latest requests, newest first."""
+    query = select(RequestLog).order_by(RequestLog.id.desc()).limit(limit)
+    if team_id is not None:
+        query = query.where(RequestLog.team_id == team_id)
+
     with SessionLocal() as session:
-        rows = session.scalars(select(RequestLog).order_by(RequestLog.id.desc()).limit(limit)).all()
+        rows = session.scalars(query).all()
         return [
             {column.name: getattr(row, column.name) for column in RequestLog.__table__.columns}
             for row in rows
         ]
 
 
-def _aggregate_query(since: datetime | None, *group_columns):
+def _aggregate_query(filters: list, *group_columns):
     is_failure = case((RequestLog.status != "success", 1), else_=0)
     query = select(
         *group_columns,
@@ -81,9 +115,7 @@ def _aggregate_query(since: datetime | None, *group_columns):
         func.coalesce(func.sum(RequestLog.cost_usd), 0.0).label("cost_usd"),
         func.avg(RequestLog.latency_ms).label("avg_latency_ms"),
     )
-    if since is not None:
-        query = query.where(RequestLog.created_at >= since)
-    return query
+    return query.where(*filters)
 
 
 def _row_to_stats(row) -> dict:
@@ -100,11 +132,9 @@ def _row_to_stats(row) -> dict:
     }
 
 
-def _column_values(session, column, since: datetime | None) -> list[int]:
+def _column_values(session, column, filters: list) -> list[int]:
     # Percentiles only make sense for requests that succeeded.
-    query = select(column).where(RequestLog.status == "success", column.is_not(None))
-    if since is not None:
-        query = query.where(RequestLog.created_at >= since)
+    query = select(column).where(RequestLog.status == "success", column.is_not(None), *filters)
     return sorted(session.scalars(query).all())
 
 

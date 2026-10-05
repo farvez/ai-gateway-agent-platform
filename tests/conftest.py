@@ -1,9 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db
+from app import auth, db, limits
+from app.db import SessionLocal
 from app.gateway.gateway import LLMGateway
 from app.main import app, gateway
+from app.models import Team
 from tests.fakes import (
     AlwaysRetryableProvider,
     BrokenProvider,
@@ -31,14 +33,48 @@ def database():
     engine.dispose()
 
 
+ADMIN_KEY = "test-admin-key"
+ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_KEY}"}
+
+
+def create_team(name: str = "test-team", **limits_) -> int:
+    with SessionLocal() as session:
+        team = Team(name=name, **limits_)
+        session.add(team)
+        session.commit()
+        return team.id
+
+
+def key_headers(team_id: int) -> dict:
+    _, plain = auth.issue_key(team_id)
+    return {"Authorization": f"Bearer {plain}"}
+
+
 @pytest.fixture
-def client(monkeypatch, database):
+def team_id(database) -> int:
+    """A team with no budget or rate limit."""
+    return create_team()
+
+
+@pytest.fixture
+def anon_client(monkeypatch, database):
+    """A test client that sends no API key."""
     # Replace the real providers with fakes for this test only.
     monkeypatch.setattr(gateway, "provider_classes", dict(FAKE_PROVIDERS))
     monkeypatch.setattr(gateway, "_instances", {})
     # Don't really wait between retries.
     monkeypatch.setattr(gateway, "_sleep", lambda seconds: None)
+    # Fresh rate-limit counters, and a known admin key.
+    monkeypatch.setattr(limits, "limiter", limits.RateLimiter())
+    monkeypatch.setenv("ADMIN_API_KEY", ADMIN_KEY)
     return TestClient(app)
+
+
+@pytest.fixture
+def client(anon_client, team_id):
+    """A test client that sends a valid key for `team_id` on every request."""
+    anon_client.headers.update(key_headers(team_id))
+    return anon_client
 
 
 @pytest.fixture
